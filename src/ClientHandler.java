@@ -1,11 +1,20 @@
 import java.io.*;
 import java.net.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import matching.MatchingFactory;
+import matching.MatchingQueue;
+import matching.MatchingUser;
 
 public class ClientHandler implements Runnable {
     private Socket socket;
     private BufferedReader in;
     private PrintWriter out;
     private String clientName;
+    int count=5;
 
     //경매 참여 여부 플래그
     private boolean participating = false;
@@ -13,6 +22,8 @@ public class ClientHandler implements Runnable {
     //소지금
     private int balance = 100;
 
+    private ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    private ScheduledFuture<?> messageTask;
     public ClientHandler(Socket socket) throws IOException {
         this.socket = socket;
         this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -38,19 +49,27 @@ public class ClientHandler implements Runnable {
 
     @Override
     public void run() {
+        MatchingFactory matchingFactory = MatchingFactory.INSTANCE;
+        MatchingQueue matchingQueue=matchingFactory.getMatchingQueue();
+
+
         try {
             clientName = in.readLine();
-
+            MatchingUser matchingUser = new MatchingUser(clientName);
+            matchingQueue.add(matchingUser);
             System.out.println("클라이언트 \"" + clientName+ "\" 가 연결되었습니다: " + socket);
-            AuctionServer.broadcastMessage(clientName + " 님이 참가했습니다.");
 
+            AuctionServer.broadcastMessage("Matching;"+matchingQueue.toString());
+            if(matchingQueue.getMatchingSize()==4){
+                informMatching(out);
+            }
             while (true) {
                 String command = in.readLine();
                 if (command == null) break;
 
                 if (command.startsWith("참가")) {
                     participating = true;
-                    AuctionServer.broadcastMessage(clientName + " 님이 경매에 참가했습니다.");
+                    AuctionServer.broadcastMessage("matching;"+clientName + " 님이 경매에 참가했습니다.");
                 } else if (command.startsWith("호가")) {
                     int bidAmount = Integer.parseInt(command.split(" ")[1]);
                     if (balance >= bidAmount) {
@@ -76,5 +95,21 @@ public class ClientHandler implements Runnable {
                 System.out.println("소켓 종료 오류");
             }
         }
+    }
+
+    private void informMatching(PrintWriter out) {
+
+        // 3초 후 1초 간격으로 메시지를 보내는 작업을 시작
+
+        messageTask = scheduler.scheduleAtFixedRate(() -> {
+            if (count >= 0) {
+                AuctionServer.broadcastMessage("MatchingFinished;" + count);
+                count--;
+            } else {
+                messageTask.cancel(false); // 반복 작업을 취소
+                System.out.println("Stopping message task.");
+            }
+        }, 3, 1, TimeUnit.SECONDS);
+
     }
 }
